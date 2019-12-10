@@ -20,20 +20,18 @@
   (assoc-in state [:program] (assoc (:program state) dest value)))
 
 (defn execute-instruction  [state]
-  (let [instruction (read-instruction state)]
-    (cond (= 1 instruction) (let [section (take 3 (drop (inc (:pc state)) (:program state)))
-                                  value (reduce + (map #(nth (:program state) %) (take 2 section)))
-                                  dest (last section)]
-                              (-> state
-                                  (update-in [:pc] #(+ 3 %))
-                                  (write-dangerously dest value)))
-          (= 2 instruction) (let [section (take 3 (drop (inc (:pc state)) (:program state)))
-                                  value (reduce * (map #(nth (:program state) %) (take 2 section)))
-                                  dest (last section)]
-                              (-> state
-                                  (update-in [:pc] #(+ 3 %))
-                                  (write-dangerously dest value)))
-          :else state)))
+  (let [instruction (read-instruction state)
+        action (cond (= 1 instruction) +
+                     (= 2 instruction) *)
+        program (:program state)
+        pc (:pc state)
+        section (take 3 (drop (inc pc) program))
+        value (reduce action (map #(nth (:program state) %) (take 2 section)))
+        dest (last section)]
+    (if (or (= 1 instruction)(= 2 instruction))
+      (-> state
+          (update-in [:pc] #(+ 3 %))
+          (write-dangerously dest value)) state)))
 
 (defn update-state [state]
   (cond (nil? (:program state))
