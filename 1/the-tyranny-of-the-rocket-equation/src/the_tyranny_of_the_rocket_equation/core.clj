@@ -2,7 +2,7 @@
   (:gen-class))
 
 (defn adjust-value [a]
-  (- (int (Math/floor (/ a 3))) 2))
+  (- (int (/ a 3)) 2))
 
 (defn calculate-fuel [sum a]
   (let [mass (adjust-value a)]
@@ -12,7 +12,7 @@
     (reduce + (map (partial calculate-fuel 0) l)))
 
 (defn -main [& args]
-  (calculate '(
+  (println (calculate '(
 104451
 112406
 109733
@@ -112,5 +112,5 @@
 143205
 140756
 147071
-133740)))
+133740))))
 
