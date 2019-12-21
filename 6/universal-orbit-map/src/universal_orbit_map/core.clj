@@ -2,7 +2,7 @@
   (:gen-class)
   (:require
    [com.stuartsierra.dependency :as dag]
-   [ clojure.set :as s]))
+   [clojure.set :as s]))
 
 (def input "CWG)HRQ
 D4M)NR4
@@ -1469,7 +1469,7 @@ WWD)KB3
         santa (dag/transitive-dependents-set graph '("SAN"))
         you (dag/transitive-dependents-set graph '("YOU"))]
     ;; no BFS needed
-    (->(s/difference
+    (-> (s/difference
         (s/union santa you)
         (s/intersection santa you))
        (count))))
