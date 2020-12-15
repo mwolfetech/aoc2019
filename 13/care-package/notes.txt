@@ -1,0 +1,91 @@
+You're doing a couple of things that are removing your dynamicity:
+
+One, looping on the main thread. If you're invoking this from the REPL, you're not going to be able to eval new definitions. Also the get-key-blocking call is going to further loop and wait, although it's a symptom of the original problem (blocking the main/repl thread).
+
+One option is to use a future to go off and do the rendering on a separate thread. I created a demo here that shows a possible way to do this.
+
+This adds a little extra complexity, since you're firing off work and want a way to manage it from a distance. I keep track of the active rendering by way of a future. This value is stored in an atom, which a utility function can access to kill any active rendering from the repl (it just delegates to call future-cancel on the rendering thread). Just in case the normal mechanisms fail, this should provide a back door to kill off errant screens (I ran into that problem early on, which prompted the creation of a safety hatch from the REPL).
+
+(def renderer (atom nil))
+(defn kill-rendering! []
+  (when @renderer
+    (future-cancel @renderer)))
+
+;;helper macro to ensure we cleanup on exit.
+;;we're not catching all the errors though....
+(defmacro with-screen [s & body]
+  `(let [~s   (screen/get-screen)
+         out# ~'*out*]
+     (reset! ~'lanternademo.core/renderer
+             (future
+               (try ~@body
+                    (catch ~'Exception e# (binding [~'*out* out#]
+                                            (println e#)))
+                    (finally (screen/stop ~s)))))))
+
+There's also some funkiness around managing the screen resource, so I wrote a little macro that handles all of the above in a nice form that will create and register the future, as well as handle errors, and on exit (either by error or by finishing the looping criterion), will ensure screen/stop is invoked.
+
+I also decoupled the rendering function from updating the state (similar to Quil's scheme of setup, update, render functions). There's a termination criteria in the state now :terminate?, which the loop will generically pick up and bail out if detected. So now we just set that information by parsing the keys as originally, and we have a means of updating our cursor position based on the key input, then rendering the state.
+
+(defn next-position [x y cmd]
+  (when-let [[dx dy] (case cmd
+                       :right [1  0]
+                       :down  [0  1]
+                       :left  [-1 0]
+                       :up    [0  -1])]
+    [(max 0 (+ x dx)) (max 0  (+ y dy))]))
+
+(def terminate? #{:escape :q})
+
+(defn update-state [{:keys [cursor-x cursor-y] :as state} k]
+  (if-let [[x y] (next-position cursor-x cursor-y k)]
+    (assoc state :cursor-x x :cursor-y y)
+    (assoc state :terminate? (terminate? k))))
+
+(defn render-cursor [scr {:keys [cursor-x cursor-y]}]
+  (doto scr
+    (screen/move-cursor cursor-x cursor-y)
+    (screen/put-string  cursor-x cursor-y (str \0))))
+
+(defn render-screen [scr {:keys [cursor-x cursor-y] :as state}]
+    (render-cursor state))
+
+Put together:
+
+(defn render [& {:keys [x y] :or {x 0 y 0}}]
+  (with-screen scr
+    (let [_   (doto scr screen/start
+                        (screen/move-cursor 0 0))]
+      (loop [state {:cursor-x 0 :cursor-y 0 :terminate? nil}]
+        (screen/redraw scr)
+        (screen/clear  scr)
+        (if-not (:terminate? state)
+          (let [nxt (update-state state
+                        (screen/get-key-blocking scr))]
+            (do (render-screen scr nxt)
+                (recur nxt)))
+          (println "Goodbye!"))))))
+
+If we invoke (render) from the REPL, we'll get a terminal with a moveable cursor, which will move with the arrow keys and quit rendering on :q or :escape.
+
+While that's running (since it's on another thread), our REPL is still responsive, so we can change function definitions (one way to inject new rendering instructions):
+
+(defn render-random-blocks [scr]
+  (screen/put-string scr (rand-int 80) (rand-int 24)
+         (str (gensym "x"))))
+
+(defn render-screen [scr {:keys [cursor-x cursor-y] :as state}]
+  (doto scr
+    (render-cursor state)
+    (render-random-blocks)))
+
+After evaluating both of those at the repl, we've modified the var-root for render-screen via defn, which the rendering loop in render will pick up on the next time. So now we get a random string block changing position every time we move the cursor.
+
+Finally, to demonstrate some utility in catching errors (I ran into this during dev), we intentionally inject a "bad" rendering call:
+
+(defn render-screen [scr state]
+  (throw (ex-info "blowup!" {:msg :forced-error})))
+
+Next time we move the cursor, rendering ceases, the window is closed, screen is stopped, and we get an exception printed to the REPL.
+
+There are other schemes to do this (e.g. using core.async or other STM mechanisms), this is what came up off the top of my head. The key thing is - if you want dynamicity and repl-driven development - don't block the REPL. Another way to do this (fairly common in swing and quil) is to have your rendering function defined in an atom, and have the loop deref the atom and apply the rendering function. Then, you can just reset the atom with a new renderer (as apposed to changing the var-root of the various functions).
